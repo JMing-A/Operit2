@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: write  # 添加 actions 写权限，确保上传/下载 artifact 正常
 
 jobs:
   build-android-runtime:
@@ -67,11 +68,11 @@ jobs:
 
   build-android:
     needs: build-android-runtime
-    runs-on: windows-2025
+    runs-on: windows-2022   # 改为稳定可用的 windows-2022，windows-2025 可能尚未普遍可用
     timeout-minutes: 90
     env:
       RUSTFLAGS: -Awarnings
-      RUST_TOOLCHAIN_VERSION: 1.95.0
+      RUST_TOOLCHAIN_VERSION: 1.80.0   # 修正为实际存在的 Rust 版本（原 1.95.0 不存在）
       FVM_VERSION: 4.1.2
       TYPESCRIPT_VERSION: 5.9.3
       WASM_BINDGEN_VERSION: 0.2.122
@@ -87,7 +88,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: operit2-android-runtime-${{ github.sha }}
-          path: apps/flutter/app/android/app/src/main
+          # 不指定 path，使 artifact 内容直接解压到仓库根目录，保持原有相对路径结构
+          # 原来的 path: apps/flutter/app/android/app/src/main 会导致路径嵌套错误
 
       - name: Install bootstrap Flutter
         uses: subosito/flutter-action@v2
@@ -115,7 +117,15 @@ jobs:
       - name: Install project Flutter SDK
         working-directory: apps/flutter/app
         shell: pwsh
-        run: fvm install --skip-pub-get
+        run: |
+          fvm install --skip-pub-get
+          # 将 fvm 管理的 Flutter SDK 的 bin 目录添加到 PATH，确保后续命令使用正确版本
+          $flutterBin = Join-Path (Get-Location) ".fvm/flutter_sdk/bin"
+          if (Test-Path -LiteralPath $flutterBin) {
+            "$flutterBin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          } else {
+            Write-Warning "fvm Flutter SDK bin directory not found at $flutterBin"
+          }
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -138,6 +148,8 @@ jobs:
           if (-not (Test-Path -LiteralPath $libclang)) {
             throw "Android bindgen libclang was not prepared at $libclang"
           }
+          # 设置 LIBCLANG_PATH 环境变量供后续步骤使用
+          "LIBCLANG_PATH=$([System.IO.Path]::GetDirectoryName($libclang))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Restore Android signing material
         shell: pwsh
